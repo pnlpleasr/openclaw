@@ -430,6 +430,66 @@ export const AgentSandboxSchema = z
   .strict()
   .optional();
 
+const VerifierScopeSchema = z
+  .object({
+    include: z.array(z.string()).optional(),
+    exclude: z.array(z.string()).optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.include && value.include.length > 0 && value.exclude && value.exclude.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "verifier scope cannot set both include and exclude (use one or the other)",
+      });
+    }
+  })
+  .optional();
+
+const VerifierWebhookSchema = z
+  .object({
+    url: z
+      .string()
+      .url()
+      .superRefine((url, ctx) => {
+        if (url.startsWith("http://")) {
+          if (process.env.NODE_ENV === "production") {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: "verifier webhook URL must use HTTPS in production",
+            });
+          }
+        }
+      }),
+    timeout: z.number().int().positive().optional(),
+    headers: z.record(z.string(), z.string()).optional(),
+    secret: z.string().optional(),
+  })
+  .strict()
+  .optional();
+
+const VerifierTelegramSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    botToken: z.string().min(1),
+    chatId: z.string().min(1),
+    timeout: z.number().int().positive().optional(),
+    allowedUserIds: z.array(z.number().int()).optional(),
+  })
+  .strict()
+  .optional();
+
+const VerifierSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    scope: VerifierScopeSchema,
+    failMode: z.enum(["deny", "allow"]).optional(),
+    webhook: VerifierWebhookSchema,
+    telegram: VerifierTelegramSchema,
+  })
+  .strict()
+  .optional();
+
 export const AgentToolsSchema = z
   .object({
     profile: ToolProfileSchema,
@@ -453,6 +513,7 @@ export const AgentToolsSchema = z
       })
       .strict()
       .optional(),
+    verifier: VerifierSchema,
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -701,6 +762,7 @@ export const ToolsSchema = z
       })
       .strict()
       .optional(),
+    verifier: VerifierSchema,
   })
   .strict()
   .superRefine((value, ctx) => {
