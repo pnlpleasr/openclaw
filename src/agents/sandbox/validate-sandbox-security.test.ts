@@ -26,6 +26,28 @@ describe("getBlockedBindReason", () => {
   it("does not block /var by default", () => {
     expect(getBlockedBindReason("/var:/var")).toBeNull();
   });
+
+  it("allows Docker Desktop SSH agent socket despite /run block", () => {
+    expect(getBlockedBindReason("/run/host-services/ssh-auth.sock:/tmp/ssh-agent.sock")).toBeNull();
+  });
+
+  it("still blocks non-allowlisted paths under /run/host-services", () => {
+    expect(getBlockedBindReason("/run/host-services/other.sock:/tmp/other.sock")).toEqual(
+      expect.objectContaining({ kind: "targets", blockedPath: "/run" }),
+    );
+  });
+
+  it("blocks the /run/host-services parent directory itself", () => {
+    expect(getBlockedBindReason("/run/host-services:/tmp/services")).toEqual(
+      expect.objectContaining({ kind: "targets", blockedPath: "/run" }),
+    );
+  });
+
+  it("blocks traversal from allowlisted path", () => {
+    expect(
+      getBlockedBindReason("/run/host-services/ssh-auth.sock/../../docker.sock:/tmp/d.sock"),
+    ).toEqual(expect.objectContaining({ kind: "targets", blockedPath: "/run" }));
+  });
 });
 
 describe("validateBindMounts", () => {

@@ -9,11 +9,16 @@ RUN apt-get update \
     curl \
     git \
     jq \
+    openssh-client \
     python3 \
     ripgrep \
   && rm -rf /var/lib/apt/lists/*
 
-RUN useradd --create-home --shell /bin/bash sandbox
+# --groups root: Docker Desktop's SSH agent socket (/run/host-services/ssh-auth.sock)
+# is created as root:root 0660. Adding sandbox to group 0 allows agent forwarding
+# without exposing raw SSH private keys. The read-only rootfs and dropped capabilities
+# limit the practical impact of group root membership.
+RUN useradd --create-home --shell /bin/bash --groups root sandbox
 USER sandbox
 WORKDIR /home/sandbox
 

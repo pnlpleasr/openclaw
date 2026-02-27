@@ -27,6 +27,11 @@ export const BLOCKED_HOST_PATHS = [
   "/run/docker.sock",
 ];
 
+// Exact paths that are safe despite living under blocked prefixes.
+// Docker Desktop's host-service proxies (SSH agent forwarding, etc.)
+// live under /run/host-services/ and are NOT the Docker socket.
+const ALLOWED_HOST_PATHS = new Set(["/run/host-services/ssh-auth.sock"]);
+
 const BLOCKED_NETWORK_MODES = new Set(["host"]);
 const BLOCKED_SECCOMP_PROFILES = new Set(["unconfined"]);
 const BLOCKED_APPARMOR_PROFILES = new Set(["unconfined"]);
@@ -78,6 +83,9 @@ export function getBlockedBindReason(bind: string): BlockedBindReason | null {
 export function getBlockedReasonForSourcePath(sourceNormalized: string): BlockedBindReason | null {
   if (sourceNormalized === "/") {
     return { kind: "covers", blockedPath: "/" };
+  }
+  if (ALLOWED_HOST_PATHS.has(sourceNormalized)) {
+    return null;
   }
   for (const blocked of BLOCKED_HOST_PATHS) {
     if (sourceNormalized === blocked || sourceNormalized.startsWith(blocked + "/")) {
