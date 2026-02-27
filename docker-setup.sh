@@ -51,13 +51,17 @@ contains_disallowed_chars() {
 validate_mount_path_value() {
   local label="$1"
   local value="$2"
+  local allow_spaces="${3:-false}"
   if [[ -z "$value" ]]; then
     fail "$label cannot be empty."
   fi
   if contains_disallowed_chars "$value"; then
     fail "$label contains unsupported control characters."
   fi
-  if [[ "$value" =~ [[:space:]] ]]; then
+  # Paths used in short-form Docker volume syntax (source:target) cannot contain
+  # spaces. The vault dir uses long-form bind syntax and may contain spaces
+  # (e.g., iCloud's "Mobile Documents" path).
+  if [[ "$allow_spaces" != "true" && "$value" =~ [[:space:]] ]]; then
     fail "$label cannot contain whitespace."
   fi
 }
@@ -133,7 +137,7 @@ export OPENCLAW_HOME_VOLUME="$HOME_VOLUME_NAME"
 #   export OPENCLAW_VAULT_DIR="/Users/<user>/Library/Mobile Documents/iCloud~md~obsidian/Documents/<vault>"
 export OPENCLAW_VAULT_DIR="${OPENCLAW_VAULT_DIR:-${OPENCLAW_WORKSPACE_DIR}/vault}"
 if [[ -n "$OPENCLAW_VAULT_DIR" ]]; then
-  validate_mount_path_value "OPENCLAW_VAULT_DIR" "$OPENCLAW_VAULT_DIR"
+  validate_mount_path_value "OPENCLAW_VAULT_DIR" "$OPENCLAW_VAULT_DIR" true
   mkdir -p "$OPENCLAW_VAULT_DIR"
 fi
 
@@ -167,6 +171,8 @@ if [[ -f "$_OPENCLAW_DOTENV" ]]; then
       _val="${BASH_REMATCH[1]}"
     elif [[ "$_val" =~ ^\'(.*)\'$ ]]; then
       _val="${BASH_REMATCH[1]}"
+    elif [[ "$_val" == \"* || "$_val" == \'* ]]; then
+      echo "WARNING: $_OPENCLAW_DOTENV: value for '$_key' has unmatched quotes, using raw value" >&2
     fi
     # Only set if not already in the environment
     if [[ -z "${!_key:-}" ]]; then
@@ -296,6 +302,8 @@ upsert_env() {
   local -a keys=("$@")
   local tmp
   tmp="$(mktemp)"
+  chmod 600 "$tmp"
+  trap "rm -f '$tmp'" EXIT
   # Use a delimited string instead of an associative array so the script
   # works with Bash 3.2 (macOS default) which lacks `declare -A`.
   local seen=" "
@@ -325,13 +333,15 @@ upsert_env() {
   done
 
   mv "$tmp" "$file"
+  trap - EXIT
 }
 
-# Restrict permissions before writing secrets
+# Ensure the .env file exists before upsert_env replaces it.
+# Permissions are set on the temp file inside upsert_env (chmod 600 before
+# writing secrets), so the final file inherits 0600 via mv.
 if [[ ! -f "$ENV_FILE" ]]; then
   touch "$ENV_FILE"
 fi
-chmod 600 "$ENV_FILE"
 
 upsert_env "$ENV_FILE" \
   OPENCLAW_CONFIG_DIR \

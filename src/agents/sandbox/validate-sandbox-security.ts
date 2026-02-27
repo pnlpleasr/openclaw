@@ -114,7 +114,8 @@ export function getBlockedReasonForSourcePath(sourceNormalized: string): Blocked
 
 function tryRealpathAbsolute(path: string): string | null {
   if (!path.startsWith("/")) {
-    return path;
+    console.error(`Sandbox security: tryRealpathAbsolute called with non-absolute path "${path}"`);
+    return null;
   }
   if (!existsSync(path)) {
     return path;
