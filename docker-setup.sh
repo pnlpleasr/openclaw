@@ -88,10 +88,60 @@ export OPENCLAW_WORKSPACE_DIR
 export OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-18789}"
 export OPENCLAW_BRIDGE_PORT="${OPENCLAW_BRIDGE_PORT:-18790}"
 export OPENCLAW_GATEWAY_BIND="${OPENCLAW_GATEWAY_BIND:-lan}"
+export OPENCLAW_UID="${OPENCLAW_UID:-$(id -u)}"
+export OPENCLAW_GID="${OPENCLAW_GID:-$(id -g)}"
+if [[ "$OPENCLAW_UID" == "0" ]]; then
+  echo "WARNING: Running as root (UID 0). The container will run as root," >&2
+  echo "which weakens security hardening. Consider setting OPENCLAW_UID=1000" >&2
+  echo "and OPENCLAW_GID=1000 to run as a non-root user." >&2
+fi
 export OPENCLAW_IMAGE="$IMAGE_NAME"
 export OPENCLAW_DOCKER_APT_PACKAGES="${OPENCLAW_DOCKER_APT_PACKAGES:-}"
 export OPENCLAW_EXTRA_MOUNTS="$EXTRA_MOUNTS"
 export OPENCLAW_HOME_VOLUME="$HOME_VOLUME_NAME"
+export OPENCLAW_VAULT_DIR="${OPENCLAW_VAULT_DIR:-${OPENCLAW_WORKSPACE_DIR}/vault}"
+if [[ -n "$OPENCLAW_VAULT_DIR" ]]; then
+  validate_mount_path_value "OPENCLAW_VAULT_DIR" "$OPENCLAW_VAULT_DIR"
+  mkdir -p "$OPENCLAW_VAULT_DIR"
+fi
+
+# Load secrets from ~/.openclaw/.env if they aren't already set.
+# This file is created manually (see setup guide) and contains credentials
+# that openclaw.json references via ${VAR} substitution.
+_OPENCLAW_DOTENV="${OPENCLAW_CONFIG_DIR}/.env"
+if [[ -f "$_OPENCLAW_DOTENV" ]]; then
+  while IFS= read -r _line || [[ -n "$_line" ]]; do
+    # Strip leading/trailing whitespace
+    _line="${_line#"${_line%%[![:space:]]*}"}"
+    _line="${_line%"${_line##*[![:space:]]}"}"
+    # Skip blank lines and comments
+    [[ -z "$_line" || "$_line" == \#* ]] && continue
+    # Strip optional 'export ' prefix
+    _line="${_line#export }"
+    # Require KEY=VALUE format
+    if [[ "$_line" != *=* ]]; then
+      echo "WARNING: $_OPENCLAW_DOTENV: malformed line (no '=' found), skipping: $_line" >&2
+      continue
+    fi
+    _key="${_line%%=*}"
+    _val="${_line#*=}"
+    # Validate key is a legal env var name
+    if [[ ! "$_key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      echo "WARNING: $_OPENCLAW_DOTENV: invalid key name '$_key', skipping" >&2
+      continue
+    fi
+    # Strip surrounding quotes from value
+    if [[ "$_val" =~ ^\"(.*)\"$ ]]; then
+      _val="${BASH_REMATCH[1]}"
+    elif [[ "$_val" =~ ^\'(.*)\'$ ]]; then
+      _val="${BASH_REMATCH[1]}"
+    fi
+    # Only set if not already in the environment
+    if [[ -z "${!_key:-}" ]]; then
+      export "$_key=$_val"
+    fi
+  done < "$_OPENCLAW_DOTENV"
+fi
 
 if [[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" ]]; then
   if command -v openssl >/dev/null 2>&1; then
@@ -232,6 +282,12 @@ upsert_env() {
   mv "$tmp" "$file"
 }
 
+# Restrict permissions before writing secrets
+if [[ ! -f "$ENV_FILE" ]]; then
+  touch "$ENV_FILE"
+fi
+chmod 600 "$ENV_FILE"
+
 upsert_env "$ENV_FILE" \
   OPENCLAW_CONFIG_DIR \
   OPENCLAW_WORKSPACE_DIR \
@@ -242,7 +298,14 @@ upsert_env "$ENV_FILE" \
   OPENCLAW_IMAGE \
   OPENCLAW_EXTRA_MOUNTS \
   OPENCLAW_HOME_VOLUME \
-  OPENCLAW_DOCKER_APT_PACKAGES
+  OPENCLAW_DOCKER_APT_PACKAGES \
+  OPENCLAW_VAULT_DIR \
+  OPENCLAW_UID \
+  OPENCLAW_GID \
+  TELEGRAM_BOT_TOKEN \
+  GOOGLE_PLACES_API_KEY \
+  NOTION_API_KEY \
+  OPENAI_WHISPER_API_KEY
 
 echo "==> Building Docker image: $IMAGE_NAME"
 docker build \
@@ -256,7 +319,7 @@ echo "==> Onboarding (interactive)"
 echo "When prompted:"
 echo "  - Gateway bind: lan"
 echo "  - Gateway auth: token"
-echo "  - Gateway token: $OPENCLAW_GATEWAY_TOKEN"
+echo "  - Gateway token: (stored in $ENV_FILE)"
 echo "  - Tailscale exposure: Off"
 echo "  - Install Gateway daemon: No"
 echo ""
@@ -281,8 +344,8 @@ echo "Gateway running with host port mapping."
 echo "Access from tailnet devices via the host's tailnet IP."
 echo "Config: $OPENCLAW_CONFIG_DIR"
 echo "Workspace: $OPENCLAW_WORKSPACE_DIR"
-echo "Token: $OPENCLAW_GATEWAY_TOKEN"
+echo "Token: (stored in $ENV_FILE)"
 echo ""
 echo "Commands:"
 echo "  ${COMPOSE_HINT} logs -f openclaw-gateway"
-echo "  ${COMPOSE_HINT} exec openclaw-gateway node dist/index.js health --token \"$OPENCLAW_GATEWAY_TOKEN\""
+echo "  ${COMPOSE_HINT} exec openclaw-gateway node dist/index.js health --token \"\$OPENCLAW_GATEWAY_TOKEN\""

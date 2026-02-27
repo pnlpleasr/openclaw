@@ -96,7 +96,7 @@ export function getBlockedReasonForSourcePath(sourceNormalized: string): Blocked
   return null;
 }
 
-function tryRealpathAbsolute(path: string): string {
+function tryRealpathAbsolute(path: string): string | null {
   if (!path.startsWith("/")) {
     return path;
   }
@@ -106,8 +106,10 @@ function tryRealpathAbsolute(path: string): string {
   try {
     // Use native when available (keeps platform semantics); normalize for prefix checks.
     return normalizeHostPath(realpathSync.native(path));
-  } catch {
-    return path;
+  } catch (err) {
+    // Security: if we can't resolve the real path, we cannot verify it is safe.
+    console.error(`Sandbox security: failed to resolve real path for "${path}": ${String(err)}`);
+    return null;
   }
 }
 
@@ -151,6 +153,12 @@ export function validateBindMounts(binds: string[] | undefined): void {
     const sourceRaw = parseBindSourcePath(bind);
     const sourceNormalized = normalizeHostPath(sourceRaw);
     const sourceReal = tryRealpathAbsolute(sourceNormalized);
+    if (sourceReal === null) {
+      throw new Error(
+        `Sandbox security: cannot resolve real path for bind mount "${bind}". ` +
+          "The source path exists but realpath resolution failed (symlink loop or permission issue).",
+      );
+    }
     if (sourceReal !== sourceNormalized) {
       const reason = getBlockedReasonForSourcePath(sourceReal);
       if (reason) {

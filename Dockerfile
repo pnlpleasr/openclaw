@@ -42,6 +42,11 @@ RUN if [ -n "$OPENCLAW_INSTALL_BROWSER" ]; then \
       rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
     fi
 
+# Install Docker CLI (needed for sandbox container management when gateway runs in Docker)
+USER root
+RUN curl -fsSL https://download.docker.com/linux/static/stable/$(uname -m)/docker-27.5.1.tgz \
+      | tar xz --strip-components=1 -C /usr/local/bin docker/docker
+
 USER node
 COPY --chown=node:node . .
 RUN pnpm build
@@ -50,6 +55,12 @@ ENV OPENCLAW_PREFER_PNPM=1
 RUN pnpm ui:build
 
 ENV NODE_ENV=production
+
+# Make /home/node writable by any UID so the container can run as the host
+# user's UID (passed via OPENCLAW_UID) while still using /home/node as HOME.
+# Sensitive data lives in the mounted volume, not in /home/node itself.
+USER root
+RUN chmod 1777 /home/node
 
 # Security hardening: Run as non-root user
 # The node:22-bookworm image includes a 'node' user (uid 1000)
