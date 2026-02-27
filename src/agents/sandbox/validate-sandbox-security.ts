@@ -3,6 +3,16 @@
  *
  * Threat model: local-trusted config, but protect against foot-guns and config injection.
  * Enforced at runtime when creating sandbox containers.
+ *
+ * Defense layers:
+ *   1. BLOCKED_HOST_PATHS — denylist of system dirs and docker socket paths
+ *   2. ALLOWED_HOST_PATHS — exact-match allowlist for paths under blocked prefixes
+ *      (e.g., SSH agent socket under /run). Checked AFTER normalization but BEFORE
+ *      the blocklist, so only exact matches bypass the block.
+ *   3. Symlink escape hardening — resolves real paths via realpathSync and re-checks
+ *      against the blocklist. Fails closed (throws) if resolution fails.
+ *   4. Network/seccomp/apparmor validation — blocks "host" networking and "unconfined"
+ *      security profiles.
  */
 
 import { existsSync, realpathSync } from "node:fs";
@@ -28,8 +38,14 @@ export const BLOCKED_HOST_PATHS = [
 ];
 
 // Exact paths that are safe despite living under blocked prefixes.
-// Docker Desktop's host-service proxies (SSH agent forwarding, etc.)
-// live under /run/host-services/ and are NOT the Docker socket.
+// Uses Set.has() for O(1) exact-match lookup — siblings, parents, and path
+// traversals all fail to match. Docker Desktop's host-service proxies (SSH
+// agent forwarding) live under /run/host-services/ and are NOT the Docker socket.
+// See validate-sandbox-security.test.ts for regression tests covering:
+//   - allowlisted path passes
+//   - sibling paths still blocked
+//   - parent directory still blocked
+//   - path traversal (../../) still blocked
 const ALLOWED_HOST_PATHS = new Set(["/run/host-services/ssh-auth.sock"]);
 
 const BLOCKED_NETWORK_MODES = new Set(["host"]);

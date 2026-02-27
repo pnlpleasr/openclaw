@@ -1,3 +1,19 @@
+# OpenClaw Gateway Image
+#
+# Builds the gateway server that handles messaging channels (Telegram, Discord,
+# WhatsApp), agent orchestration, and sandbox container management.
+#
+# Key design decisions:
+#   - Base image pinned by SHA256 digest to prevent supply-chain tag mutation
+#   - Runs as non-root 'node' user (UID 1000) for security hardening
+#   - /home/node is chmod 1777 so the container can run as any UID via
+#     OPENCLAW_UID (critical for macOS where host user is UID 501)
+#   - Docker CLI installed for spawning sibling sandbox containers
+#   - Bun installed for build scripts; pnpm for production runtime
+#
+# Build: docker build -t openclaw:local -f Dockerfile .
+# Run:   see docker-compose.yml
+
 FROM node:22-bookworm@sha256:cd7bcd2e7a1e6f72052feb023c7f6b722205d3fcab7bbcbd2d1bfdab10b1e935
 
 # Install Bun (required for build scripts)
@@ -9,6 +25,8 @@ RUN corepack enable
 WORKDIR /app
 RUN chown node:node /app
 
+# Optional extra system packages (e.g., ffmpeg for audio processing).
+# Pass via: docker build --build-arg OPENCLAW_DOCKER_APT_PACKAGES="ffmpeg" ...
 ARG OPENCLAW_DOCKER_APT_PACKAGES=""
 RUN if [ -n "$OPENCLAW_DOCKER_APT_PACKAGES" ]; then \
       apt-get update && \
@@ -42,7 +60,10 @@ RUN if [ -n "$OPENCLAW_INSTALL_BROWSER" ]; then \
       rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
     fi
 
-# Install Docker CLI (needed for sandbox container management when gateway runs in Docker)
+# Install Docker CLI for sandbox container management. The gateway spawns
+# sibling containers (not nested) via the Docker socket mounted from the host.
+# Only the CLI binary is needed — the daemon runs on the host.
+# Version pinned; $(uname -m) handles multi-architecture builds (amd64/arm64).
 USER root
 RUN curl -fsSL https://download.docker.com/linux/static/stable/$(uname -m)/docker-27.5.1.tgz \
       | tar xz --strip-components=1 -C /usr/local/bin docker/docker
@@ -68,7 +89,10 @@ RUN chmod 1777 /home/node
 USER node
 
 # Start gateway server with default config.
-# Binds to loopback (127.0.0.1) by default for security.
+# Binds to loopback (127.0.0.1) by default — docker-compose.yml overrides
+# to --bind lan so the gateway is reachable from the host via port mapping.
+# The 127.0.0.1 prefix on the port mapping (in docker-compose.yml) ensures
+# the port isn't exposed on the LAN despite the --bind lan inside the container.
 #
 # For container platforms requiring external health checks:
 #   1. Set OPENCLAW_GATEWAY_TOKEN or OPENCLAW_GATEWAY_PASSWORD env var

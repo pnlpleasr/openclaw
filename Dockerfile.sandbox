@@ -1,3 +1,26 @@
+# OpenClaw Sandbox Image
+#
+# Ephemeral containers spawned by the gateway for isolated tool execution.
+# Each agent action (shell commands, git operations, etc.) runs in a fresh
+# sandbox with security constraints enforced by the gateway:
+#
+#   - Read-only root filesystem (writable dirs via tmpfs)
+#   - All Linux capabilities dropped
+#   - no-new-privileges flag set
+#   - Env var sanitizer blocks *_TOKEN, *_API_KEY, *_PASSWORD, etc.
+#   - Bind mount validator blocks /etc, /proc, /sys, /dev, /root, docker.sock
+#   - Network defaults to "none" (set to "bridge" in config for git push/pull)
+#
+# SSH agent forwarding (no raw keys in container):
+#   The host SSH agent socket is bind-mounted at /tmp/ssh-agent.sock.
+#   The sandbox user is in group root (GID 0) so it can read the socket,
+#   which Docker Desktop creates as root:root 0660. SSH config and
+#   known_hosts are bind-mounted read-only from the host. Private keys
+#   NEVER enter the container — only signatures cross the boundary.
+#
+# Build: scripts/sandbox-setup.sh
+# Config: ~/.openclaw/openclaw.json → agents.defaults.sandbox.docker
+
 FROM debian:bookworm-slim@sha256:98f4b71de414932439ac6ac690d7060df1f27161073c5036a7553723881bffbe
 
 ENV DEBIAN_FRONTEND=noninteractive

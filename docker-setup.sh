@@ -1,4 +1,27 @@
 #!/usr/bin/env bash
+# docker-setup.sh — One-time setup for running the OpenClaw gateway in Docker.
+#
+# What it does (in order):
+#   1. Detects host UID/GID for container user matching (warns if root)
+#   2. Loads secrets from ~/.openclaw/.env if it exists (robust parser)
+#   3. Generates a 256-bit gateway token if not already set
+#   4. Validates and creates mount paths (config, workspace, vault)
+#   5. Writes all env vars to the project .env (chmod 600, gitignored)
+#   6. Builds the gateway Docker image
+#   7. Runs the onboarding wizard interactively
+#   8. Starts the gateway via Docker Compose
+#
+# Prerequisites:
+#   - Docker and Docker Compose installed
+#   - Must be run with bash (uses BASH_SOURCE; `bash docker-setup.sh` or `source docker-setup.sh`)
+#
+# Optional env vars (set before running):
+#   OPENCLAW_VAULT_DIR    — Path to Obsidian vault (defaults to ~/.openclaw/workspace/vault)
+#   OPENCLAW_EXTRA_MOUNTS — Comma-separated extra bind mounts (source:target[:opts])
+#   OPENCLAW_UID/GID      — Override container user (defaults to host user's id)
+#
+# See docker-setup-guide.md for full documentation.
+
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -83,11 +106,17 @@ fi
 mkdir -p "$OPENCLAW_CONFIG_DIR"
 mkdir -p "$OPENCLAW_WORKSPACE_DIR"
 
+# ── Environment setup ──────────────────────────────────────────────────────────
+
 export OPENCLAW_CONFIG_DIR
 export OPENCLAW_WORKSPACE_DIR
 export OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-18789}"
 export OPENCLAW_BRIDGE_PORT="${OPENCLAW_BRIDGE_PORT:-18790}"
 export OPENCLAW_GATEWAY_BIND="${OPENCLAW_GATEWAY_BIND:-lan}"
+
+# Match the container's runtime UID/GID to the host user so bind-mounted
+# directories (owned by the host user) are accessible inside the container.
+# On macOS the default user is UID 501; on Linux it's typically 1000.
 export OPENCLAW_UID="${OPENCLAW_UID:-$(id -u)}"
 export OPENCLAW_GID="${OPENCLAW_GID:-$(id -g)}"
 if [[ "$OPENCLAW_UID" == "0" ]]; then
@@ -99,6 +128,9 @@ export OPENCLAW_IMAGE="$IMAGE_NAME"
 export OPENCLAW_DOCKER_APT_PACKAGES="${OPENCLAW_DOCKER_APT_PACKAGES:-}"
 export OPENCLAW_EXTRA_MOUNTS="$EXTRA_MOUNTS"
 export OPENCLAW_HOME_VOLUME="$HOME_VOLUME_NAME"
+# Vault directory for Obsidian or other knowledge base files.
+# Defaults to workspace/vault if not set. For iCloud-synced Obsidian vaults:
+#   export OPENCLAW_VAULT_DIR="/Users/<user>/Library/Mobile Documents/iCloud~md~obsidian/Documents/<vault>"
 export OPENCLAW_VAULT_DIR="${OPENCLAW_VAULT_DIR:-${OPENCLAW_WORKSPACE_DIR}/vault}"
 if [[ -n "$OPENCLAW_VAULT_DIR" ]]; then
   validate_mount_path_value "OPENCLAW_VAULT_DIR" "$OPENCLAW_VAULT_DIR"
@@ -143,6 +175,10 @@ if [[ -f "$_OPENCLAW_DOTENV" ]]; then
   done < "$_OPENCLAW_DOTENV"
 fi
 
+# ── Gateway token ──────────────────────────────────────────────────────────────
+# Generate a 256-bit hex token for gateway authentication if not already set.
+# This token is required for all API calls to the gateway.
+
 if [[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" ]]; then
   if command -v openssl >/dev/null 2>&1; then
     OPENCLAW_GATEWAY_TOKEN="$(openssl rand -hex 32)"
@@ -155,6 +191,10 @@ PY
   fi
 fi
 export OPENCLAW_GATEWAY_TOKEN
+
+# ── Compose file assembly ──────────────────────────────────────────────────────
+# The base docker-compose.yml is always used. If extra mounts or a named home
+# volume are configured, a docker-compose.extra.yml overlay is generated.
 
 COMPOSE_FILES=("$COMPOSE_FILE")
 COMPOSE_ARGS=()
@@ -243,6 +283,11 @@ COMPOSE_HINT="docker compose"
 for compose_file in "${COMPOSE_FILES[@]}"; do
   COMPOSE_HINT+=" -f ${compose_file}"
 done
+
+# ── Project .env persistence ───────────────────────────────────────────────────
+# Write all env vars to the project-level .env file that Docker Compose reads.
+# This file is gitignored and chmod 600 (contains secrets).
+# upsert_env preserves existing entries and updates/adds new ones.
 
 ENV_FILE="$ROOT_DIR/.env"
 upsert_env() {
